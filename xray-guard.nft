@@ -1,0 +1,66 @@
+#!/usr/sbin/nft -f
+# 放到 /usr/share/nftables.d/ruleset-pre/xray-guard.nft，由 fw4 原子重建独立保护表。
+# 每次重建都会收回健康许可；Xray 服务停止时不得删除本表。
+# 运行期间须关闭软件/硬件 flow offload；首次关闭后重载 fw4，清除已有缓存。
+# LAN 接口须与 xray.nft、xray-fw4.nft 及健康监控一致。
+
+# 先声明再删除，保证首次加载及重复加载都可在同一事务内完成。
+table inet xray_guard
+delete table inet xray_guard
+
+table inet xray_guard {
+	# 与 xray.nft 保持一致；这些目的地址在故障期间仍可访问。
+	set bypass4 {
+		type ipv4_addr
+		flags interval
+		elements = {
+			0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+			169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16,
+			224.0.0.0/4, 240.0.0.0/4
+		}
+	}
+
+	# 保留 IPv6 本地地址；使用全局地址的同 LAN 内网按路由出口另行豁免。
+	set bypass6 {
+		type ipv6_addr
+		flags interval
+		elements = { ::1/128, fc00::/7, fe80::/10 }
+	}
+
+	# 监控确认进程、监听、规则和策略路由正常后，每 3 秒刷新 br-lan 的许可。
+	# 默认空；监控消失后许可逻辑上在 6 秒到期，不是系统负载下的硬实时保证。
+	set ready {
+		type ifname
+		flags timeout
+		timeout 6s
+	}
+
+	chain prerouting {
+		# 早于 xray 的 mangle (-150)，故障时连仍能被 TPROXY 接管的流量也阻断。
+		type filter hook prerouting priority -151; policy accept;
+
+		iifname != "br-lan" return
+
+		# 路由器管理、广播和组播本地收包继续由 fw4 检查。
+		fib daddr type { local, broadcast, multicast } return
+		meta nfproto ipv4 ip daddr @bypass4 return
+		meta nfproto ipv6 ip6 daddr @bypass6 return
+		meta nfproto ipv6 fib daddr oifname "br-lan" return
+
+		# 仅允许健康期间继续进入后续 TPROXY / fw4 链，不改变既定分流。
+		iifname @ready return
+		counter drop comment "Xray guard: no healthy LAN internet lease"
+	}
+
+	chain forward {
+		# 早于 fw4 的 priority 0 和 flow add，不能改成 chain-pre/forward include。
+		type filter hook forward priority -1; policy accept;
+
+		# IPv6 公网转发始终禁止；保留 ULA、链路本地和同 LAN 出口。
+		iifname "br-lan" meta nfproto ipv6 oifname != "br-lan" ip6 daddr != @bypass6 counter drop comment "Xray guard: block LAN IPv6 internet"
+
+		# 正常 TPROXY 走 INPUT，Xray 出站走 OUTPUT；此处阻止无监听时 TCP/UDP 直连。
+		# 在上述禁用卸载前提下，与健康租约无关，已建立连接也不能绕过。
+		iifname "br-lan" meta nfproto ipv4 ip daddr != @bypass4 meta l4proto { tcp, udp } counter drop comment "Xray guard: block IPv4 TCP UDP forwarding"
+	}
+}

@@ -1,0 +1,7 @@
+# 放到 /usr/share/nftables.d/ruleset-post/xray-fw4.nft，由 fw4 在同一事务内加载。
+# 部署时删除旧的 chain-pre/input/xray-fw4.nft，避免提前 accept 绕过后续 INPUT 检查。
+# 只豁免已被 TPROXY 接管的 LAN IPv4 TCP SYN 的共享限速，return 后仍继续 INPUT 检查。
+# 接口和标记须与 /etc/xray/xray.nft 一致。
+# add 对已有链不报错；关闭 SYN 防护时仅创建一个没有调用方的普通链。
+add chain inet fw4 syn_flood
+insert rule inet fw4 syn_flood meta nfproto ipv4 iifname "br-lan" meta mark 0x1 meta l4proto tcp tcp flags & (fin | syn | rst | ack) == syn counter return comment "Xray TPROXY SYN exemption"

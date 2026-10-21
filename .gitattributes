@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.nft text eol=lf
+xray-tproxy text eol=lf
+bash.bashrc text eol=lf
