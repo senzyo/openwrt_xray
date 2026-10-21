@@ -162,18 +162,3 @@ Xray 不可用时，LAN 公网流量默认阻断，内网和路由器管理按�
 2. 对照备份恢复原 DHCP/DNS 与 firewall 配置，只撤销本次改动；期间有其他配置更改时须合并，不能直接覆盖。恢复 dnsmasq 和 odhcpd，避免系统 DNS 仍指向已经停止的 Xray。
 3. 移除本次新增的 `ruleset-pre/xray-guard.nft`、`ruleset-post/xray-fw4.nft`，并按原部署情况恢复被覆盖的项目文件、旧 include、Bash 配置和 root 原 shell。先核验 `fw4 check`，再重载防火墙。
 4. 若目标是恢复没有本项目保护的原直连行为，确认原 DNS、防火墙配置正确后，**显式**执行 `nft delete table inet xray_guard`。仅删除 include 文件或停 Xray 不等于删除已加载的保护表。最后确认 `ip xray` 接管表、mark 1/table 100 的项目规则与路由已清理；如有残留，只删除本项目对应项，不清空共享规则表。
-
-## 本地测试
-
-在提供 POSIX shell 与常用命令的本地环境中，从项目根目录执行；Python 3 测试可使用已有 Python，或通过 `uv` 运行。不要在路由器上运行这组测试。
-
-```sh
-sh tests/test_health.sh
-sh tests/test_service.sh
-sh tests/test_ipv6.sh
-sh tests/test_offload.sh
-sh tests/test_policy.sh
-python -B -m unittest discover -s tests -p 'test_firewall.py'
-```
-
-这些测试使用临时目录和命令替身，覆盖状态转换、socket 缓存核验、启动/停止、IPv6 配置保护、标准卸载清理、策略路由比较范围及规则结构；不会连接路由器。通过测试不等于已经在目标固件上验证真实 nft 内核路径、硬件卸载或代理连通，部署后仍需按第 6 步核验。
